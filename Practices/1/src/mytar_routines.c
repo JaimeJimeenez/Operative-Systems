@@ -18,13 +18,12 @@ int
 copynFile(FILE * origin, FILE * destination, int nBytes)
 {
 	int total = 0, letra = 0;
+	if (origin == NULL || destination == NULL) return -1;
 
 	//Mientras que se lea un caracter. Hay que checkear que a la hora de putc y getc no hay ningun error
-	while (total < nBytes) {
+	while (letra != EOF && total < nBytes) {
 		letra = getc(origin);
-		if (letra == EOF)
-			break;
-		putc(letra, destination);
+		putc((char) letra, destination);
 		total++;
 	}
 
@@ -45,27 +44,23 @@ copynFile(FILE * origin, FILE * destination, int nBytes)
 char*
 loadstr(FILE * file)
 {
-	fopen(file, "r");
-	char leido;
-	int i = 0;
-	leido = getc(file);
+	int letra = (int) 'a';
+	int cont = 0;
 
-	//Se ve cuanto ocupa el nombre del fichero 
-	while (leido != '\0') {
-		i++;
-		leido = getc(file);
-		printf("%c", leido);
+	while (letra != '\0' && letra != EOF) {
+		letra = fgetc(file);
+		cont++;
 	}
-	i++;
-	//Se vuelve a la direccion de memoria donde comenzaba el nombre del fichero
-	fseek(file, -i, SEEK_CUR);
 
-	//Se reserva en memoria un char* que ocupa el tamaño del nombre del fichero * el tamaño del char
-	char* name = malloc(i * sizeof(char));
-	for (int j = 0; j < i; i++)
-		name[i] = getc(file);
+	if (letra == EOF) return NULL;
 
-	return name;
+	char *l = malloc(cont);
+	fseek(file, -cont, SEEK_CUR);
+
+	for (int i = 0; i < cont; i++)
+		l[i] = fgetc(file);
+
+	return l;
 }
 
 /** Read tarball header and store it in memory.
@@ -81,14 +76,14 @@ stHeaderEntry*
 readHeader(FILE * tarFile, int *nFiles)
 {
 	stHeaderEntry* array = NULL;
-	int nr_files = *nFiles;
 	/* Read the number of files (N) and store it in nr_files*/
+	fread(nFiles, sizeof(int), 1, tarFile);
 
 	/* Allocate memory for the array */
-	array = malloc(sizeof(stHeaderEntry) * nr_files);
+	array = malloc(sizeof(stHeaderEntry) * (*nFiles));
 
 	/* Read the (pathname, size) pairs from tarFile and store them in the array */
-	for (int i = 0; i < nr_files; i++) {
+	for (int i = 0; i < *nFiles; i++) {
 		array[i].name = loadstr(tarFile);
 		array[i].size = getc(tarFile);
 	}
@@ -133,7 +128,7 @@ createTar(int nFiles, char *fileNames[], char tarName[])
 		return EXIT_FAILURE;
 	
 	//2. Se reserva en memoria un array de tipo stHeaderEntry. El array tendrá tantos elementos como ficheros
-	stHeaderEntry* header = malloc(sizeof(unsigned int) * nFiles);
+	stHeaderEntry* header = malloc(sizeof(stHeaderEntry) * nFiles);
 	
 	//3. Se posiciona en el byte del fichero donde comienza la región de datos 
 	int offData = sizeof(int) + nFiles * sizeof(unsigned int);
@@ -146,21 +141,32 @@ createTar(int nFiles, char *fileNames[], char tarName[])
 	for (int i = 0; i < nFiles; i++) {
 		origin = fopen(fileNames[i], "r");
 
-		header[i].name = fileNames[i];
+		header[i].name = malloc(sizeof(fileNames[i]) + 1);
+		strcpy(header[i].name, fileNames[i]);
+
 		header[i].size = copynFile(origin, tarFile, INT_MAX);
 
-		if (fclose(origin) != 0)
+		if (header[i].size == -1) {
+			printf("Fichero no encontrado\n");
 			return EXIT_FAILURE;
+		}
+
+		fclose(origin);
 	}
 
 	fseek(tarFile, 0, SEEK_SET);
 	fwrite(&nFiles, sizeof(int), 1, tarFile);
 
 	for (int i = 0; i < nFiles; i++) {
-		fwrite(header[i].name, strlen(header[i].name) + 1, 1, tarFile);
-		fwrite(header[i].size, sizeof(int), 1, tarFile);
+		fwrite(header[i].name, strlen(header[i].name), 1, tarFile);
+		fwrite("\0", sizeof(char), 1, tarFile);
+		fwrite(&header[i].size, sizeof(int), 1, tarFile);
 	}
 
+	for (int i = 0; i < nFiles; i++)
+		free(header[i].name);
+
+	free(header);
 	if (fclose(tarFile) != 0) 
 		return EXIT_FAILURE;
 
@@ -187,21 +193,34 @@ extractTar(char tarName[])
 {
 	//Se abre el fichero tar
 	FILE* tarFile = fopen(tarName, "r");
+	if (tarFile == NULL) {
+		printf("No existe este fichero\n");
+		return EXIT_FAILURE;
+	}
+
 	printf("Fichero abierto\n");
 
 	//Se lee la cabecera para saber cuantos ficheros hay en el paquete mtar
-	int nFiles = getc(tarFile);
+	int nFiles = 0;
 	stHeaderEntry* header = readHeader(tarFile, &nFiles);
+	if (header == NULL) {
+		printf("No se ha podido leer el fichero");
+		return EXIT_FAILURE;
+	}
 
 	//Se abren los respectivos ficheros copiando el contenido de estos
 	FILE* destination;
+	int copy;
 	for (int i = 0; i < nFiles; i++) {
 		
 		destination = fopen(header[i].name, "w");
-		copynFile(tarFile, destination, header[i].size);
+		copy = copynFile(tarFile, destination, header[i].size);
 		
-		if (fclose(destination) != 0)
+		if (copy == -1) {
+			printf("No se ha podido extraer el fichero tar");
+			fclose(tarFile);
 			return EXIT_FAILURE;
+		}
 	}
 
 	// Se libera la memoria
