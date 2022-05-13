@@ -5,7 +5,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 
-//This solution is implemented with mutex and conditions variables
+//This solution is implemented with shared memory and sempahores
 
 #define PROD 10
 #define SEM_PAR 0
